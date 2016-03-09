@@ -7,6 +7,6 @@ The Eddystone BLE protocol is used by the [Physical Web(tm)](https://github.com/
 
 NOTE: this version doesn't support Eddystone Config mode. To change the beacon URL, you need to modify the Sketch and reload the beacon.
 
-NOTE: this Sketch requires [my modifications to the CurieBLE library](https://github.com/bneedhamia/CurieBLEServiceData) to support beacon Advertising.
+NOTE: this Sketch requires my modifications to the CurieBLE library to support beacon Advertising. These changes can be seen in [my support-eddystone-url pull request](https://github.com/01org/corelibs-arduino101/pull/146) for the CurieBLE library, or as [my repo containing those changes](https://github.com/bneedhamia/CurieBLEServiceData).
 
 See the comments in the .ino file for more details.
