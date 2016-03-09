@@ -45,7 +45,7 @@
  *   instead of Complete Service UUID list required by Eddystone.
  * - It doesn't support Service Data, which is required by Eddystone.
  */
-#include <CurieBle.h>        // BHN-Modified Curie-specific BLE Library
+#include <CurieBLE.h>        // BHN-Modified Curie-specific BLE Library
 
 /*
  * Pinout:
