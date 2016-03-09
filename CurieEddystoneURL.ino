@@ -11,18 +11,23 @@
  * your device.
  * 
  * Note: this version doesn't support Eddystone Config mode.
- * To change the URL, you need to modify the Sketch and reload the beacon.
+ * To change the URL, you need to modify MY_URL and reload the Arduino.
  * 
  * Parts required:
  *   Arduino/Genuino 101.  This Sketch runs only on Curie-based devices.
  *   No other hardware is required.
  * 
  * To Use:
- * - Replace CurieBLE/BLEPeripheral.* and CurieBLE/keywords.txt 
+ * - Setup your CurieBLE libraries to support Eddystone.
+ *   Doing this may be a little complicated until the Eddystone support
+ *   is added to the CurieBLE library.  Until then...
+ *   There are two ways to do that:
+ *   1) pull code from https://github.com/bneedhamia/corelibs-arduino101/tree/support-eddystone-url
+ *   or
+ *   2) Replace CurieBLE/BLEPeripheral.* and CurieBLE/keywords.txt 
  *   with a modified version that supports Eddystone Advertising packets.
- *   See (TODO ADD GITHUB CURIEBLE CHANGES URL).
- * - Modify the URL in this sketch, keeping in mind
- *   the Eddystone encoded URL limit of 18 bytes.
+ *   See https://github.com/bneedhamia/CurieBLEServiceData
+ * - Set MY_URL to the url for the beacon to broadcast.
  * - Download this Sketch to an Arduino/Genuino 101.
  * - Download a Physical Web app to your phone.
  *   For example, Google's Physical Web Android app is at
@@ -54,7 +59,53 @@
  */
 const int PIN_BLINK = 13;        // Pin 13 is the on-board LED
 
-BLEPeripheral ble;              // Root of our BLE Peripheral (server) capability
+/*
+ * The (unencoded) URL to put into the
+ * Eddystone-URL beacon frame.
+ * 
+ * NOTE: the encoded length must be under 18 bytes long.
+ * See initEddystoneUrlFrame().
+ *
+ * NOTE: This Sketch supports only lower-case URLs.
+ * See initEddystoneUrlFrame().
+ */
+const char* MY_URL = "https://www.needhamia.com";
+
+/*
+ * The Tx Power to put into the Eddystone-URL beacon frame.
+ * 
+ * From the Eddystone-URL Protocol specification
+ * (https://github.com/google/eddystone/blob/master/eddystone-url/README.md#tx-power-level)
+ * "the best way to determine the precise value
+ * to put into this field is to measure the actual output
+ * of your beacon from 1 meter away and then add 41dBm to that.
+ * 41dBm is the signal loss that occurs over 1 meter."
+ * 
+ * I used the Nordic nRF Master Control Panel Android app
+ * (https://play.google.com/store/apps/details?id=no.nordicsemi.android.mcp&hl=en)
+ * to measure the beacon power at 1 meter.
+ */
+const int8_t TX_POWER_DBM = (-70 + 41); // measured -70dbM at one meter
+
+/*
+ * Maximum number of bytes in an Eddystone URL frame.
+ * = the frame type, Tx Power, Url Prefix, up to 17 bytes of Url.
+ * (The spec isn't completely clear.  That might be 18 rather than 17.)
+ */
+const uint8_t MAX_URL_FRAME_LENGTH = 1 + 1 + 1 + 17;
+
+/*
+ * Eddystone-URL frame type
+ */
+const uint8_t FRAME_TYPE_EDDYSTONE_URL = 0x10;
+
+/*
+ * Eddystone-URL url prefix types
+ */
+const uint8_t URL_PREFIX_HTTP_WWW_DOT = 0x00;
+const uint8_t URL_PREFIX_HTTPS_WWW_DOT = 0x01;
+const uint8_t URL_PREFIX_HTTP_COLON_SLASH_SLASH = 0x02;
+const uint8_t URL_PREFIX_HTTPS_COLON_SLASH_SLASH = 0x03;
 
 /*
  * eddyService = Our BLE Eddystone Service.
@@ -64,35 +115,41 @@ BLEPeripheral ble;              // Root of our BLE Peripheral (server) capabilit
  * 
  */
 BLEService eddyService("FEAA");
+BLEPeripheral ble;              // Root of our BLE Peripheral (server) capability
 
 /*
- * Hard-coded Eddystone URL frame for our device.
- * See https://github.com/google/eddystone/blob/master/eddystone-url/README.md
+ * The Service Data to Advertise.
+ * See initEddystoneUrlFrame().
+ * 
+ * urlFrame[] = the Service Data for our Eddystone-URL frame.
+ * urlFrameLength = the number of bytes in urlFrame[].
  */
-const int MAX_SVC_DATA_LENGTH = 18;  // Maximum number of bytes in the UriData attribute value.
-byte DEFAULT_SVC_DATA[MAX_SVC_DATA_LENGTH + 1] = {
-  "\x10\xEB\x01google\x07"  // Eddystone URL frame, power, URL scheme, url, URL suffix.
-  };
-unsigned short DEFAULT_SVC_DATA_LENGTH = 10;    // number of value bytes in DEFAULT_SVC_DATA. No null terminator counted
+uint8_t urlFrame[MAX_URL_FRAME_LENGTH];
+uint8_t urlFrameLength;
+
 
 void setup() {
   Serial.begin(9600);
 
-  // Set up the I/O pins
   pinMode(PIN_BLINK, OUTPUT);
   digitalWrite(PIN_BLINK, LOW);
 
-  //TODO build the Eddystone URL Service Data: with power and url from EEPROM.
+  if (!initEddystoneUrlFrame(TX_POWER_DBM, MY_URL)) {
+    //TODO make the light steady if we fail.
+    return; // don't start advertising if the URL won't work.
+  }
+    
   /*
    * Set up Bluetooth Low Energy Advertising
-   * of the Eddystone URL frame.
+   * of the Eddystone-URL frame.
    */
   ble.setAdvertisedServiceUuid(eddyService.uuid());
-  ble.setAdvertisedServiceData(eddyService.uuid(), DEFAULT_SVC_DATA, DEFAULT_SVC_DATA_LENGTH);
+  ble.setAdvertisedServiceData(eddyService.uuid(), urlFrame, urlFrameLength);
   
   // Start Advertising our Eddystone URL.
   ble.begin();
 }
+
 
 unsigned long prevReportMillis = 0L;
 
@@ -110,8 +167,9 @@ void loop() {
   }
 }
 
+
 /*
- * Prints the complete adversiting block
+ * Prints the complete advertising block
  * that was assembled by CurieBLE.
  * For debugging.
  */
@@ -125,5 +183,124 @@ void report() {
     Serial.print("0x");
     Serial.println(pAdv[i], HEX);
   }
+}
+
+
+/*
+ * Fills urlFrame and urlFrameLength
+ * based on the given Transmit power and URL.
+ * 
+ * txPower = the transmitted power of the Arduino 101.
+ * See TX_POWER_DBM above.
+ * 
+ * url = the URL to encode.  Likely a shortened URL
+ * produced by an URL shortening service such as https://goo.gl/
+ * 
+ * Returns true if successful; false otherwise.
+ * If the encoded URL is too long, use an URL shortening service
+ * before passing the (shortened) URL to setServiceData().
+ */
+boolean initEddystoneUrlFrame(int8_t txPower, const char* url) {
+  urlFrameLength = 0;
+
+  // The frame starts with a type byte, then power byte.
+  urlFrame[urlFrameLength++] = FRAME_TYPE_EDDYSTONE_URL;
+  urlFrame[urlFrameLength++] = (uint8_t) txPower;
+
+  if (url == 0 || url[0] == '\0') {
+    return false;   // empty URL
+  }
+
+  const char *pNext = url;
+
+  // the next byte of the frame is an URL prefix code.
+  
+  if (strncmp("http", pNext, 4) != 0) {
+    return false;  // doesn't start with HTTP or HTTPS.
+  }
+  pNext += 4;
+  
+  bool isHttps = false; // that is, HTTP
+  if (*pNext == 's') {
+    pNext++;
+    isHttps = true;
+  }
+
+  if (strncmp("://", pNext, 3) != 0) {
+    return false; // malformed URL
+  }
+  pNext += 3;
+
+  urlFrame[urlFrameLength] = URL_PREFIX_HTTP_COLON_SLASH_SLASH;
+  if (isHttps) {
+    urlFrame[urlFrameLength] = URL_PREFIX_HTTPS_COLON_SLASH_SLASH;
+  }
+
+  if (strncmp("www.", pNext, 4) == 0) {
+    pNext += 4;
+
+    urlFrame[urlFrameLength] = URL_PREFIX_HTTP_WWW_DOT;
+    if (isHttps) {
+      urlFrame[urlFrameLength] = URL_PREFIX_HTTPS_WWW_DOT;
+    }
+  }
+  
+  urlFrameLength++;
+
+  /*
+   * Encode the URL.
+   * 
+   * NOTE: most of this code is untested.
+   */
+  while (urlFrameLength < MAX_URL_FRAME_LENGTH && *pNext != '\0') {
+    if (strncmp(".com/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x00;
+    } else if (strncmp(".org/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x01;
+    } else if (strncmp(".edu/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x02;
+    } else if (strncmp(".net/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x03;
+    } else if (strncmp(".info/", pNext, 6) == 0) {
+      pNext += 6;
+      urlFrame[urlFrameLength++] = 0x04;
+    } else if (strncmp(".biz/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x05;
+    } else if (strncmp(".gov/", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x06;
+    } else if (strncmp(".com", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x07;
+    } else if (strncmp(".org", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x08;
+    } else if (strncmp(".edu", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x09;
+    } else if (strncmp(".net", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x0A;
+    } else if (strncmp(".info", pNext, 5) == 0) {
+      pNext += 5;
+      urlFrame[urlFrameLength++] = 0x0B;
+    } else if (strncmp(".biz", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x0C;
+    } else if (strncmp(".gov", pNext, 4) == 0) {
+      pNext += 4;
+      urlFrame[urlFrameLength++] = 0x0D;
+    } else {
+      // It's not special.  Just copy the character
+      urlFrame[urlFrameLength++] = (uint8_t) *pNext++;
+    }
+  }
+
+  return true;
 }
 
