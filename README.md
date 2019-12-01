@@ -1,6 +1,8 @@
 # CurieEddystoneURL
 Arduino 101 Sketch to Advertise an [Eddystone](https://github.com/google/eddystone) URL
 
+NOTE: Intel discontinued the Arduino 101 (Curie) board in 2017, so this project is obsolete.
+
 This sketch is intended to be an Arduino/Genuino 101 Eddystone-compatible Sketch
 
 The Eddystone BLE protocol is used by the [Physical Web(tm)](https://github.com/google/physical-web) project. The Physical Web project is about BLE (Bluetooth Low Energy) beacons that broadcast URLs so your users don't have to download an app just to interact with your device.
